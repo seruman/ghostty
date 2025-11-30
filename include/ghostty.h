@@ -901,6 +901,8 @@ typedef struct {
   ghostty_runtime_confirm_read_clipboard_cb confirm_read_clipboard_cb;
   ghostty_runtime_write_clipboard_cb write_clipboard_cb;
   ghostty_runtime_close_surface_cb close_surface_cb;
+  // IPC socket path for scripting API (set by Swift, exposed to shells as GHOSTTY_SOCKET)
+  const char* ipc_socket_path;
 } ghostty_runtime_config_s;
 
 // apprt.ipc.Target.Key
@@ -1033,6 +1035,7 @@ bool ghostty_surface_read_text(ghostty_surface_t,
                                ghostty_selection_s,
                                ghostty_text_s*);
 void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
+int ghostty_surface_get_foreground_pid(ghostty_surface_t);
 
 #ifdef __APPLE__
 void ghostty_surface_set_display_id(ghostty_surface_t, uint32_t);

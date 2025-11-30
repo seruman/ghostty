@@ -11,6 +11,11 @@ class AppDelegate: NSObject,
                     UNUserNotificationCenterDelegate,
                     GhosttyAppDelegate
 {
+    /// Shared instance for scripting support
+    static var instance: AppDelegate? {
+        return NSApp.delegate as? AppDelegate
+    }
+
     // The application logger. We should probably move this at some point to a dedicated
     // class/struct but for now it lives here! 🤷‍♂️
     static let logger = Logger(
@@ -97,11 +102,17 @@ class AppDelegate: NSObject,
     /// The global undo manager for app-level state such as window restoration.
     lazy var undoManager = ExpiringUndoManager()
 
+    /// Track if quick terminal has been initialized (to avoid triggering lazy init)
+    private(set) var isQuickTerminalInitialized = false
+
     /// Our quick terminal. This starts out uninitialized and only initializes if used.
-    private(set) lazy var quickController = QuickTerminalController(
-        ghostty,
-        position: derivedConfig.quickTerminalPosition
-    )
+    private(set) lazy var quickController: QuickTerminalController = {
+        isQuickTerminalInitialized = true
+        return QuickTerminalController(
+            ghostty,
+            position: derivedConfig.quickTerminalPosition
+        )
+    }()
 
     /// Manages updates
     let updateController = UpdateController()
@@ -125,6 +136,12 @@ class AppDelegate: NSObject,
 
     /// The custom app icon image that is currently in use.
     @Published private(set) var appIcon: NSImage? = nil
+
+    /// IPC socket server for scripting API
+    private var ipcServer: SocketServer?
+
+    /// IPC action handler used by socket server
+    private(set) var ipcActionHandler: IPCActionHandler?
 
     override init() {
         super.init()
@@ -261,6 +278,9 @@ class AppDelegate: NSObject,
         // Setup signal handlers
         setupSignals()
 
+        // Setup IPC socket server for scripting API
+        setupIPCServer()
+
         switch Ghostty.launchSource {
         case .app:
             // Don't have to do anything.
@@ -386,6 +406,10 @@ class AppDelegate: NSObject,
         // so remove them all now. In the future we may want to be
         // more selective and only remove surface-targeted notifications.
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+
+        // Stop the IPC server and unregister from instance registry
+        ipcServer?.unregisterInstance()
+        ipcServer?.stop()
     }
 
     /// This is called when the application is already open and someone double-clicks the icon
@@ -489,6 +513,24 @@ class AppDelegate: NSObject,
     /// This is called for the dock right-click menu.
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         return dockMenu
+    }
+
+    /// Setup the IPC socket server for scripting API
+    @MainActor private func setupIPCServer() {
+        // Create action handler
+        ipcActionHandler = IPCActionHandler(appDelegate: self)
+
+        // Create and start socket server
+        let socketPath = Ghostty.App.ipcSocketPath
+        ipcServer = SocketServer(socketPath: socketPath, actionHandler: ipcActionHandler!)
+
+        do {
+            try ipcServer?.start()
+            ipcServer?.registerInstance()
+            Self.logger.info("IPC server started at \(socketPath)")
+        } catch {
+            Self.logger.error("Failed to start IPC server: \(error)")
+        }
     }
 
     /// Setup signal handlers

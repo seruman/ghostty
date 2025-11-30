@@ -44,6 +44,17 @@ extension Ghostty {
             return ghostty_app_needs_confirm_quit(app)
         }
 
+        /// The IPC socket path for the scripting API. This is computed once at launch
+        /// and exposed to child shells via GHOSTTY_SOCKET environment variable.
+        static let ipcSocketPath: String = {
+            let uid = getuid()
+            let pid = ProcessInfo.processInfo.processIdentifier
+            return "/tmp/ghostty.\(uid).\(pid).sock"
+        }()
+
+        /// Keep the socket path string alive for the lifetime of the app
+        private var ipcSocketPathCString: UnsafeMutablePointer<CChar>?
+
         init() {
             // Initialize the global configuration.
             self.config = Config()
@@ -51,6 +62,9 @@ extension Ghostty {
                 readiness = .error
                 return
             }
+
+            // Allocate the IPC socket path C string (must stay alive for app lifetime)
+            self.ipcSocketPathCString = strdup(Self.ipcSocketPath)
 
             // Create our "runtime" config. The "runtime" is the configuration that ghostty
             // uses to interface with the application runtime environment.
@@ -63,7 +77,8 @@ extension Ghostty {
                 confirm_read_clipboard_cb: { userdata, str, state, request in App.confirmReadClipboard(userdata, string: str, state: state, request: request ) },
                 write_clipboard_cb: { userdata, loc, content, len, confirm in
                     App.writeClipboard(userdata, location: loc, content: content, len: len, confirm: confirm) },
-                close_surface_cb: { userdata, processAlive in App.closeSurface(userdata, processAlive: processAlive) }
+                close_surface_cb: { userdata, processAlive in App.closeSurface(userdata, processAlive: processAlive) },
+                ipc_socket_path: self.ipcSocketPathCString
             )
 
             // Create the ghostty app.
@@ -102,6 +117,11 @@ extension Ghostty {
         deinit {
             // This will force the didSet callbacks to run which free.
             self.app = nil
+
+            // Free the IPC socket path C string
+            if let cString = ipcSocketPathCString {
+                free(cString)
+            }
 
 #if os(macOS)
             NotificationCenter.default.removeObserver(self)

@@ -76,6 +76,10 @@ pub const App = struct {
 
         /// Close the current surface given by this function.
         close_surface: ?*const fn (SurfaceUD, bool) callconv(.c) void = null,
+
+        /// IPC socket path for scripting API. If set, this will be exposed
+        /// to child shells as GHOSTTY_SOCKET environment variable.
+        ipc_socket_path: ?[*:0]const u8 = null,
     };
 
     /// This is the key event sent for ghostty_surface_key and
@@ -927,6 +931,11 @@ pub const Surface = struct {
             // the desktop then we didn't set our LANGUAGE var so we
             // don't need to remove it.
             if (internal_os.launchedFromDesktop()) env.remove("LANGUAGE");
+
+            // If we have an IPC socket path, expose it to child shells
+            if (self.app.opts.ipc_socket_path) |socket_path| {
+                try env.put("GHOSTTY_SOCKET", std.mem.sliceTo(socket_path, 0));
+            }
         }
 
         return env;
@@ -1540,6 +1549,16 @@ pub const CAPI = struct {
     /// Returns true if the surface process has exited.
     export fn ghostty_surface_process_exited(surface: *Surface) bool {
         return surface.core_surface.child_exited;
+    }
+
+    /// Returns the foreground process group ID (PID) for the terminal.
+    /// This is the process currently in the foreground of the PTY.
+    /// Returns -1 if the PID cannot be determined.
+    export fn ghostty_surface_get_foreground_pid(surface: *Surface) c_int {
+        const pty = surface.core_surface.io.backend.exec.subprocess.pty orelse return -1;
+        const c = @cImport({ @cInclude("unistd.h"); });
+        const pgrp = c.tcgetpgrp(pty.master);
+        return if (pgrp < 0) -1 else pgrp;
     }
 
     /// Returns true if the surface has a selection.
